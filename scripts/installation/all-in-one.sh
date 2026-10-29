@@ -592,7 +592,7 @@ function install_sedna() {
       return
     fi
     run_in_control_plane bash -e -o pipefail -c "
-    curl -fsSL https://raw.githubusercontent.com/kubeedge/sedna/main/scripts/installation/install.sh | SEDNA_ACTION=clean SEDNA_VERSION=$SEDNA_VERSION bash -
+    curl -fsSL https://raw.githubusercontent.com/kubeedge/sedna/main/scripts/installation/install.sh | SEDNA_ACTION=delete SEDNA_VERSION=$SEDNA_VERSION bash -
   "
   fi
 

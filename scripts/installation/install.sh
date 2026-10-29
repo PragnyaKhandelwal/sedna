@@ -16,7 +16,7 @@
 
 # Influential env vars:
 #
-# SEDNA_ACTION    | optional | 'create'/'clean', default is 'create'
+# SEDNA_ACTION    | optional | 'create'/'delete', default is 'create'
 # SEDNA_VERSION   | optional | The Sedna version to be installed.
 #                              if not specified, it will get latest release version.
 # SEDNA_ROOT      | optional | The Sedna offline directory
