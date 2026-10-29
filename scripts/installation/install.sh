@@ -40,11 +40,13 @@ get_latest_version() {
   # ...
   # "tag_name": "v1.0.0",
   # ...
-  {
-    curl -s https://api.github.com/repos/$repo/releases/latest |
+  # --fail and checking the result: on an HTTP error such as the API rate limit, curl used to
+  # succeed with an error body, giving an empty version and the invalid image tag "v"
+  local version
+  version=$(curl --fail -s https://api.github.com/repos/$repo/releases/latest |
     awk '/"tag_name":/&&$0=$2' |
-    sed 's/[",]//g'
-  } || echo $DEFAULT_SEDNA_VERSION # fallback
+    sed 's/[",]//g') || true
+  echo "${version:-$DEFAULT_SEDNA_VERSION}"
 }
 
 : ${SEDNA_VERSION:=$(get_latest_version)}
@@ -61,7 +63,9 @@ _download_yamls() {
 
     echo downloading $yaml into ${SEDNA_ROOT}/$yaml_dir
     local try_times=30 i=1 timeout=2
-    while ! timeout ${timeout}s curl -sSO https://raw.githubusercontent.com/kubeedge/sedna/main/$yaml_dir/$yaml; do
+    # use the manifests of the installed SEDNA_VERSION, falling back to main for releases without them
+    while ! timeout ${timeout}s curl -fsSO https://raw.githubusercontent.com/kubeedge/sedna/$SEDNA_VERSION/$yaml_dir/$yaml &&
+        ! timeout ${timeout}s curl -fsSO https://raw.githubusercontent.com/kubeedge/sedna/main/$yaml_dir/$yaml; do
       ((++i>try_times)) && {
         echo timeout to download $yaml
         exit 2

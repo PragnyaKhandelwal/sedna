@@ -40,6 +40,9 @@
 # FORCE_INSTALL_SEDNA   | optional | If 'true', force reinstall Sedna, default false.
 # NODE_IMAGE            | optional | Custom node image
 # REUSE_EDGE_CONTAINER  | optional | Whether reuse edge node containers or not, default is true
+# MAX_CLOUD_WORKER_NODES| optional | The maximum allowed NUM_CLOUD_WORKER_NODES, default 2
+# MAX_EDGE_WORKER_NODES | optional | The maximum allowed NUM_EDGE_NODES, default 3;
+#                                    raise it only if the host has enough CPU and memory
 
 set -o errexit
 set -o nounset
@@ -72,8 +75,8 @@ function prepare_env() {
 
   : ${ALLINONE_NODE_IMAGE:=kubeedge/sedna-allinone-node:$DEFAULT_NODE_IMAGE_VERSION}
 
-  readonly MAX_CLOUD_WORKER_NODES=2
-  readonly MAX_EDGE_WORKER_NODES=3
+  : ${MAX_CLOUD_WORKER_NODES:=2}
+  : ${MAX_EDGE_WORKER_NODES:=3}
 
   # TODO: find a better way to figure this kind control plane
   readonly CONTROL_PLANE_NAME=${CLUSTER_NAME}-control-plane
