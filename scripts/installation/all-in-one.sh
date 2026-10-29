@@ -463,7 +463,9 @@ function create_and_setup_edgenodes() {
 
   for((i=0;i<NUM_EDGE_NODES;i++)); do
     log_info "Installing $i-th edge node..."
-    local containername=sedna-mini-edge$i
+    # prefix with the cluster name so that several all-in-one clusters can run on one host;
+    # the default CLUSTER_NAME keeps the previous name sedna-mini-edge<N>
+    local containername=${CLUSTER_NAME}-edge$i
     local hostname=edge$i
     local label=sedna.io=sedna-mini-edge
 
@@ -488,7 +490,7 @@ function create_and_setup_edgenodes() {
       --detach $ALLINONE_NODE_IMAGE
     )
 
-    local existing_id=$(docker ps -qa --filter name=$containername --filter label=$label)
+    local existing_id=$(docker ps -qa --filter "name=^/${containername}$" --filter label=$label)
     if [ -n "$existing_id" ]; then
       if [ "${REUSE_EDGE_CONTAINER,,}" = true ] ; then
         log_info "Use existing container for ''$containername'"
@@ -548,7 +550,8 @@ function create_and_setup_edgenodes() {
 }
 
 function clean_edgenodes() {
-  for cid in $(docker ps -a --filter label=sedna.io=sedna-mini-edge -q); do
+  # only this cluster's edge nodes, so cleaning one cluster keeps the others running
+  for cid in $(docker ps -a --filter label=sedna.io=sedna-mini-edge --filter "name=^/${CLUSTER_NAME}-edge[0-9]+$" -q); do
     docker stop $cid; docker rm $cid
   done
 }
