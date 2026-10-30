@@ -46,11 +46,20 @@ get_latest_version() {
   version=$(curl --fail -s https://api.github.com/repos/$repo/releases/latest |
     awk '/"tag_name":/&&$0=$2' |
     sed 's/[",]//g') || true
-  echo "${version:-$DEFAULT_SEDNA_VERSION}"
+  if [ -z "$version" ]; then
+    echo "could not resolve the latest Sedna release, using $DEFAULT_SEDNA_VERSION" >&2
+    version=$DEFAULT_SEDNA_VERSION
+  fi
+  echo "$version"
 }
 
 : ${SEDNA_VERSION:=$(get_latest_version)}
 SEDNA_VERSION=v${SEDNA_VERSION#v}
+
+# download one manifest into the current directory, printing curl's HTTP status (000 on a network error)
+_fetch_yaml() {
+  timeout ${2}s curl -sS -o "$(basename $1)" -w '%{http_code}' https://raw.githubusercontent.com/kubeedge/sedna/$1 || true
+}
 
 _download_yamls() {
 
@@ -58,16 +67,25 @@ _download_yamls() {
   mkdir -p ${SEDNA_ROOT}/$yaml_dir
   cd ${SEDNA_ROOT}/$yaml_dir
   for yaml in ${yaml_files[@]}; do
-    # the yaml file already exists, no need to download
+    # the yaml file already exists, no need to download.
+    # Note a cached file is reused whatever SEDNA_VERSION it came from,
+    # so use a fresh SEDNA_ROOT when changing SEDNA_VERSION.
     [ -e "$yaml" ] && continue
 
-    echo downloading $yaml into ${SEDNA_ROOT}/$yaml_dir
-    local try_times=30 i=1 timeout=2
-    # use the manifests of the installed SEDNA_VERSION, falling back to main for releases without them
-    while ! timeout ${timeout}s curl -fsSO https://raw.githubusercontent.com/kubeedge/sedna/$SEDNA_VERSION/$yaml_dir/$yaml &&
-        ! timeout ${timeout}s curl -fsSO https://raw.githubusercontent.com/kubeedge/sedna/main/$yaml_dir/$yaml; do
+    # use the manifests of the installed SEDNA_VERSION. Only when that tag does not
+    # have the file (404) fall back to main; any other error is retried.
+    local ref=$SEDNA_VERSION
+    echo downloading $yaml from $ref into ${SEDNA_ROOT}/$yaml_dir
+    local try_times=30 i=1 timeout=2 code
+    while code=$(_fetch_yaml $ref/$yaml_dir/$yaml $timeout); [ "$code" != 200 ]; do
+      rm -f "$yaml"
+      if [ "$code" = 404 ] && [ "$ref" != main ]; then
+        echo "$yaml is not in Sedna $ref, falling back to main"
+        ref=main
+        continue
+      fi
       ((++i>try_times)) && {
-        echo timeout to download $yaml
+        echo "failed to download $yaml from $ref (last HTTP status: $code)"
         exit 2
       }
       echo -en "retrying to download $yaml after $[i*timeout] seconds...\r"
