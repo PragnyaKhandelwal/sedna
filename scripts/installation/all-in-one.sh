@@ -78,6 +78,8 @@ function prepare_env() {
   # TODO: find a better way to figure this kind control plane
   readonly CONTROL_PLANE_NAME=${CLUSTER_NAME}-control-plane
   readonly CLOUD_WORKER_NODE_NAME=${CLUSTER_NAME}-worker
+  # target this cluster explicitly, the current kubectl context may be another cluster
+  readonly KUBE_CONTEXT=kind-${CLUSTER_NAME}
 
   # cloudcore default websocket port
   : ${CLOUDCORE_WS_PORT:=10000}
@@ -279,7 +281,7 @@ reconfigure_edgecore() {
   # see https://github.com/kubernetes/kubernetes/issues/64623 for more detais
   # So I use Daemonset temporarily
 
-  kubectl apply -f - <<EOF
+  kubectl --context "$KUBE_CONTEXT" apply -f - <<EOF
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -354,9 +356,9 @@ spec:
 EOF
 
   # wait this script been executed
-  kubectl -n kubeedge rollout status --timeout=5m ds $script_name
+  kubectl --context "$KUBE_CONTEXT" -n kubeedge rollout status --timeout=5m ds $script_name
   # wait all edge nodes to be ready if restarted
-  kubectl wait --for=condition=ready node -l node-role.kubernetes.io/edge=
+  kubectl --context "$KUBE_CONTEXT" wait --for=condition=ready node -l node-role.kubernetes.io/edge=
 
   # keep this daemonset script for debugging
   # kubectl -n kubeedge delete ds $script_name
@@ -395,7 +397,7 @@ function install_edgemesh() {
   if ((NUM_CLOUD_WORKER_NODES>0)); then
     server_node_name=${CLUSTER_NAME}-worker
     # master node also needs edgemesh agent for apiservice's communication
-    kubectl taint nodes ${CLUSTER_NAME}-control-plane node-role.kubernetes.io/master=:NoSchedule-
+    kubectl --context "$KUBE_CONTEXT" taint nodes ${CLUSTER_NAME}-control-plane node-role.kubernetes.io/master=:NoSchedule-
   else
     server_node_name=${CLUSTER_NAME}-control-plane
   fi
@@ -413,7 +415,7 @@ function install_edgemesh() {
 
   # no server.publicIP
   # since allinone is in flat network, we just use private ip for edgemesh server
- helm upgrade --install edgemesh \
+ helm upgrade --install edgemesh --kube-context "$KUBE_CONTEXT" \
     --set server.nodeName=$server_node_name \
     https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/helm/edgemesh.tgz
 
@@ -468,6 +470,9 @@ function create_and_setup_edgenodes() {
     local containername=${CLUSTER_NAME}-edge$i
     local hostname=edge$i
     local label=sedna.io=sedna-mini-edge
+    # label filters match literally, unlike name filters which are regexes,
+    # so a CLUSTER_NAME with dots cannot match another cluster's containers
+    local cluster_label=sedna.io/cluster=${CLUSTER_NAME}
 
     # Many tricky arguments are from the kind code
     # https://github.com/kubernetes-sigs/kind/blob/4910c3e221a858e68e29f9494170a38e1c4e8b80/pkg/cluster/internal/providers/docker/provision.go#L148
@@ -477,6 +482,7 @@ function create_and_setup_edgenodes() {
       --hostname "$hostname"
       --name "$containername"
       --label $label
+      --label $cluster_label
       --privileged
       --security-opt seccomp=unconfined
       --security-opt apparmor=unconfined
@@ -490,7 +496,7 @@ function create_and_setup_edgenodes() {
       --detach $ALLINONE_NODE_IMAGE
     )
 
-    local existing_id=$(docker ps -qa --filter "name=^/${containername}$" --filter label=$label)
+    local existing_id=$(docker ps -qa --filter label=$label --filter label=$cluster_label --filter "name=^/${containername}$")
     if [ -n "$existing_id" ]; then
       if [ "${REUSE_EDGE_CONTAINER,,}" = true ] ; then
         log_info "Use existing container for ''$containername'"
@@ -538,7 +544,7 @@ function create_and_setup_edgenodes() {
       # wait edge node to be created at background
       nwait=20
       for((i=0;i<nwait;i++)); do
-        kubectl get node $hostname &>/dev/null && break
+        kubectl --context "$KUBE_CONTEXT" get node $hostname &>/dev/null && break
         sleep 3
       done
     } &
@@ -551,7 +557,15 @@ function create_and_setup_edgenodes() {
 
 function clean_edgenodes() {
   # only this cluster's edge nodes, so cleaning one cluster keeps the others running
-  for cid in $(docker ps -a --filter label=sedna.io=sedna-mini-edge --filter "name=^/${CLUSTER_NAME}-edge[0-9]+$" -q); do
+  local cids=$(docker ps -a --filter label=sedna.io=sedna-mini-edge --filter label=sedna.io/cluster=${CLUSTER_NAME} -q)
+  # edge containers created before the cluster label have no sedna.io/cluster label and
+  # are named sedna-mini-edge<N> whatever the CLUSTER_NAME; the default cluster removes them.
+  # For an older custom-named cluster, remove them by hand:
+  #   docker rm -f $(docker ps -aq --filter label=sedna.io=sedna-mini-edge --filter name='^/sedna-mini-edge[0-9]+$')
+  if [ "$CLUSTER_NAME" = sedna-mini ]; then
+    cids+=" $(docker ps -a --filter label=sedna.io=sedna-mini-edge --filter 'name=^/sedna-mini-edge[0-9]+$' -q)"
+  fi
+  for cid in $(printf '%s\n' $cids | sort -u); do
     docker stop $cid; docker rm $cid
   done
 }
@@ -690,7 +704,7 @@ function main() {
       setup_cloud
       setup_edge
       # wait all nodes to be ready
-      kubectl wait --for=condition=ready node --all
+      kubectl --context "$KUBE_CONTEXT" wait --for=condition=ready node --all
 
       # edgemesh need to be installed before sedna
       install_edgemesh
